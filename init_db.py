@@ -22,6 +22,9 @@ class Transaction(Base):
     bank: Mapped[str] = mapped_column(String(10))
     category: Mapped[Optional[int]] = mapped_column(Integer)
     note: Mapped[Optional[str]] = mapped_column(String)
+    
+    def attr_list(self):
+        return [self.transaction_id, self.transaction_date, self.issuer, self.amount, self.currency, self.bank, self.category, self.note]
 
 def main():
     engine = create_engine("sqlite:///auskunft.db", echo=True)

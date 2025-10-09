@@ -3,8 +3,10 @@ from datetime import datetime
 import pandas as pd
 from pathlib import Path
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import select
+
 from init_db import Transaction
 from colorama import Fore, Style, init
 try:
@@ -12,6 +14,25 @@ try:
 except ImportError:
     import pyreadline3 as readline # windows
 import subprocess
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+    Paragraph,
+    PageBreak,
+    Spacer,
+    Image
+)
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib import utils
+
+import matplotlib.pyplot as plt
+import textwrap
 
 CATEGORIES = {
     1: "Groceries, food, household",
@@ -27,14 +48,20 @@ CATEGORIES = {
 BANKS = ["revolut", "ing"]
 
 COMMANDS = {
-    "input_single": BANKS,
+    "import_single": BANKS,
     "exit": [],
-    "view_db": []
+    "view_db": [],
+    "export": []
 }
 
 BASE_DIR = Path(__file__).parent
 CSV_DIR = BASE_DIR / "auskunft_folder"
 DB_PATH = (BASE_DIR / "auskunft.db")
+REPORTS_DIR = BASE_DIR / "sumreport_folder"
+IMG_PATH = BASE_DIR / "piechart.png"
+
+ENGINE = create_engine(f"sqlite:///{DB_PATH.resolve()}")
+Session = sessionmaker(bind=ENGINE)
 
 G = Fore.GREEN
 C = Fore.CYAN
@@ -47,7 +74,7 @@ def completer(text, state):
     """
     Context-aware tab completion:
     - Completes commands
-    - Suggests args for input_single (and later input_bulk)
+    - Suggests args for import_single (and later input_bulk)
     - Lists CSV files in auskunftfolder
     """
     buffer = readline.get_line_buffer()
@@ -63,8 +90,8 @@ def completer(text, state):
     else:
         cmd = parts[0]
 
-        # Arguments for input_single
-        if cmd == "input_single":
+        # Arguments for import_single
+        if cmd == "import_single":
             # Determine which argument we're completing
             arg_index = len(parts) - 1
             # If the last character is space, we're starting a new argument
@@ -157,8 +184,8 @@ def to_iso_date(value):
     return None
 
 def insert_db(df: pd.DataFrame):
-    engine = create_engine(f"sqlite:///{DB_PATH.resolve()}")
-    with Session(engine) as session:
+    
+    with Session.begin() as session:
         for row in df.itertuples(index = True):
             try:
                 if row.Bank == "ing":
@@ -208,16 +235,164 @@ def view_db():
     except subprocess.CalledProcessError as e:
         print(f"Squall exited with an error: {e}")
 
-# def piechart with mathplotlib
-# def summarizing algorithm
-# def pdf algorithm
+def check_dates(date1, date2):
+    fmt = "%Y-%m-%d"
+    try:
+        from_date = datetime.strptime(date1, fmt).date()
+        to_date = datetime.strptime(date2, fmt).date()
+    except:
+        print("Error: invalid from and to date format. Usage: YYYY-MM-DD\n")
+        return False
+    
+    if from_date > to_date:
+        print("Error: To date is before from date.\n")
+        return False
+    
+    return True
+    
+def make_piechart(category_sums):
+    labels = [CATEGORIES.get(k) for k in category_sums.keys()]
+    values = [abs(v) for v in category_sums.values()]
+    
+    custom_labels = ["" if value == 0 else f"{textwrap.fill(label, 20)}\n -{value:.1f}EUR" for label, value in zip(labels, values)]
+
+    fig, ax = plt.subplots(figsize=(10, 7))  
+    wedges, texts, autotexts = ax.pie(
+        values,
+        labels=custom_labels,
+        autopct= lambda pct, vals=values: f'{pct:1.1f}%' if vals.pop(0) != 0 else '',
+        startangle=90,
+        wedgeprops=dict(width=0.5),  # donut
+        labeldistance=1.2
+    )
+
+    for text in texts:
+        text.set_fontsize(12)
+        text.set_fontweight('bold')
+
+    for autotext in autotexts:
+        autotext.set_fontsize(9)
+
+    plt.tight_layout()
+    plt.savefig(str(IMG_PATH), dpi=300, bbox_inches='tight')
+    plt.close()
+
+def get_image(path, width):
+    img = utils.ImageReader(path)
+    iw, ih = img.getSize()
+    aspect = ih / float(iw)
+    return Image(path, width=width, height=(width * aspect))
+
+def generate_pdf(from_date, to_date, output_file):
+    doc = SimpleDocTemplate(output_file, pagesize=A4)
+    styles = getSampleStyleSheet()
+    elements = []
+    
+    categories = {
+        1: [],
+        2: [],
+        3: [],
+        4: [],
+        5: [],
+        6: [],
+        7: []
+    }
+    with Session.begin() as session:
+        query = select(Transaction) \
+            .where(Transaction.transaction_date >= from_date, Transaction.transaction_date <= to_date) \
+            .order_by(Transaction.transaction_date.desc())
+        transactions = session.scalars(query).all()
+        for t in transactions:
+            categories[t.category].append(t.attr_list())
+    category_sums = {cat: sum(r[3] for r in items) for cat, items in categories.items()}
+    elements.append(Paragraph("Transaction Report", styles["Title"]))
+    elements.append(Spacer(1, 4*cm))
+
+    make_piechart(category_sums)
+    elements.append(get_image(str(IMG_PATH), width = 15*cm))
+    elements.append(PageBreak())
+
+    # === Category Pages ===
+    for cat, items in categories.items():
+        if items:
+            tables = make_category_tables(items, styles, category_sums.get(cat))
+            for idx, table in enumerate(tables):
+                # Category header at top of every page
+                elements.append(Paragraph(f"<b> {CATEGORIES.get(cat)}</b>", styles["Heading2"]))
+                elements.append(Spacer(1, 6))
+                elements.append(table)
+                if idx < len(tables) - 1:
+                    elements.append(PageBreak())
+            elements.append(PageBreak())
+    doc.build(elements)
+
+def make_category_tables(rows, styles, total):
+    """Split category data into multiple tables (if needed)."""
+    max_rows_per_page = 19
+    tables = []
+
+    for start in range(0, len(rows), max_rows_per_page):
+        chunk = rows[start : start + max_rows_per_page]
+        data = []
+        row_colors = []
+
+        # Transaction rows
+        for idx, (transaction_id, transaction_date, issuer, amount, currency, bank, category, note) in enumerate(chunk):
+            print(chunk)
+            desc_text = f"Transaction #{transaction_id}, {transaction_date} - {issuer}<br/>&#10148; {note}"
+            amount_text = f"{amount:.2f}{currency}"
+            data.append([Paragraph(desc_text, styles["Normal"]), amount_text])
+            bg_color = colors.white if idx % 2 else colors.whitesmoke
+            row_colors.append(bg_color)
+
+        # Sum row on last chunk only
+        if start + max_rows_per_page >= len(rows):
+            
+
+            right_style = ParagraphStyle(
+                "RightSum",
+                parent=styles["Normal"],
+                alignment=2  # 2 = TA_RIGHT
+            )
+
+            data.append([
+                Paragraph("<b>Sum:</b>", styles["Normal"]),
+                Paragraph(f"<b><font size=10>{total:.2f} EUR</font></b>", right_style),
+            ])
+            row_colors.append(colors.white)
+
+        # Build table
+        table = Table(data, colWidths=[13*cm, 3*cm])
+        style_cmds = [
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]
+
+        # Alternating background colors
+        for i, bg in enumerate(row_colors):
+            style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
+
+        # Add space above sum row and right-align the sum cell
+        if start + max_rows_per_page >= len(rows):
+            style_cmds.append(("TOPPADDING", (0, -1), (-1, -1), 10))
+
+
+        # No borders between cells
+        style_cmds.append(("LINEBELOW", (0, 0), (-1, -1), 0, colors.white))
+
+        table.setStyle(TableStyle(style_cmds))
+        tables.append(table)
+
+    return tables
 
 def main():
     init(autoreset=True)
     readline.parse_and_bind("tab: complete")
     readline.set_completer(completer)
     while True:
-        print(f"Available commands: {G}ping{S}, {G}input_single{S} {C}<bank> <input.csv>{S}, {G}exit{S}\n")
+        print(f"Available commands: {G}ping{S}, {G}import_single{S} {C}<bank> <input.csv>{S}, {G}view_db{S}, {G}export{S} {C}<from-date> <to-date>{S},  {G}exit{S}\n")
         cmd = input("-> ").strip().lower()
         print() 
         if cmd == "exit":
@@ -226,7 +401,7 @@ def main():
         parts = cmd.split()
         if not parts:
             continue
-        if parts[0] == "input_single":
+        if parts[0] == "import_single":
             if len(parts) == 3:
                 target_file = CSV_DIR / "new" / parts[1] / parts[2]
                 df = read_csv(target_file)
@@ -234,10 +409,19 @@ def main():
                 relocate_path = CSV_DIR / "old" / parts[1] / parts[2]
                 target_file.rename(relocate_path)
             else:
-                print("Usage: input_single <bank> <input.csv>\n")
+                print("Usage: import_single <bank> <input.csv>\n")
         elif parts[0] == "view_db":
             view_db()
-        ## elif "export <from:date> <to:date> <output_file>"
+        elif parts[0] == "export":
+            if len(parts) == 3 and check_dates(parts[1], parts[2]):
+                output_file = REPORTS_DIR / f"Report_{parts[1]}-{parts[2]}.pdf"
+                from_date = datetime.strptime(parts[1], "%Y-%m-%d").date()
+                to_date = datetime.strptime(parts[2], "%Y-%m-%d").date()
+                generate_pdf(from_date, to_date, str(output_file))
+                print(f"Report created: {output_file}\n")
+                Path.unlink(BASE_DIR / "piechart.png")
+            else:
+                print("Usage: export <from-date> <to-date>\n")
         ## elif "visualize <from:date> <to:date>"
         else:
             print("Unknown command.\n")
