@@ -387,10 +387,15 @@ def make_category_tables(rows, styles, total):
 
     return tables
 
+from greeting.welcome import default_greeting
+
 def main():
     init(autoreset=True)
     readline.parse_and_bind("tab: complete")
     readline.set_completer(completer)
+
+    default_greeting(1.0) # Calls greeting with animation speed of 1x
+
     while True:
         print(f"Available commands: {G}ping{S}, {G}import_single{S} {C}<bank> <input.csv>{S}, {G}view_db{S}, {G}export{S} {C}<from-date> <to-date>{S},  {G}exit{S}\n")
         cmd = input("-> ").strip().lower()
