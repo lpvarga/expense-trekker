@@ -28,7 +28,7 @@ from reportlab.platypus import (
     Spacer,
     Image
 )
-from reportlab.lib.enums import TA_LEFT
+
 from reportlab.lib import utils
 
 import matplotlib.pyplot as plt
@@ -51,7 +51,7 @@ COMMANDS = {
     "import_single": BANKS,
     "exit": [],
     "view_db": [],
-    "export": []
+    "export_all": []
 }
 
 BASE_DIR = Path(__file__).parent
@@ -121,7 +121,7 @@ def completer(text, state):
         return options[state]
     return None
 
-def categorize(df: pd.DataFrame):
+def categorize(df: pd.DataFrame): 
     new_categories = []
     new_notes = []
     for row in df.itertuples():
@@ -183,8 +183,7 @@ def to_iso_date(value):
             continue
     return None
 
-def insert_db(df: pd.DataFrame):
-    
+def insert_db(df: pd.DataFrame): 
     with Session.begin() as session:
         for row in df.itertuples(index = True):
             try:
@@ -211,14 +210,14 @@ def insert_db(df: pd.DataFrame):
                 session.add(transaction)
             except Exception as e:
                 print(f"Error creating Transaction for row {row.Index}: {e}")
-                return -1
+                return False
         try:
             session.commit()
         except SQLAlchemyError as e:
             session.rollback()
             print(f"Database commit failed: {e}")
-            return -1
-    return 0
+            return False
+    return True
 
 def view_db():
     print(f"Opening Squall for SQLite database: {DB_PATH}...")
@@ -283,7 +282,7 @@ def get_image(path, width):
     aspect = ih / float(iw)
     return Image(path, width=width, height=(width * aspect))
 
-def generate_pdf(from_date, to_date, output_file):
+def generate_pdf(from_date, to_date, output_file, category):
     doc = SimpleDocTemplate(output_file, pagesize=A4)
     styles = getSampleStyleSheet()
     elements = []
@@ -301,23 +300,29 @@ def generate_pdf(from_date, to_date, output_file):
         query = select(Transaction) \
             .where(Transaction.transaction_date >= from_date, Transaction.transaction_date <= to_date) \
             .order_by(Transaction.transaction_date.desc())
+        if category: query = query.filter(Transaction.category == category)
         transactions = session.scalars(query).all()
         for t in transactions:
             categories[t.category].append(t.attr_list())
     category_sums = {cat: sum(r[3] for r in items) for cat, items in categories.items()}
     elements.append(Paragraph("Transaction Report", styles["Title"]))
-    elements.append(Spacer(1, 4*cm))
-
-    make_piechart(category_sums)
-    elements.append(get_image(str(IMG_PATH), width = 15*cm))
+    elements.append(Spacer(1, 1*cm))
+    elements.append(Paragraph(f'<para alignment="center">{from_date}-{to_date}</para>', styles["Heading2"]))
+    
+    if not category:
+        elements.append(Spacer(1, 2*cm))
+        make_piechart(category_sums)
+        elements.append(get_image(str(IMG_PATH), width = 15*cm))
+    else:
+        elements.append(Paragraph(f'<para alignment="center">{CATEGORIES.get(category)}</para>', styles["Heading2"]))
     elements.append(PageBreak())
+        
 
     # === Category Pages ===
     for cat, items in categories.items():
         if items:
             tables = make_category_tables(items, styles, category_sums.get(cat))
             for idx, table in enumerate(tables):
-                # Category header at top of every page
                 elements.append(Paragraph(f"<b> {CATEGORIES.get(cat)}</b>", styles["Heading2"]))
                 elements.append(Spacer(1, 6))
                 elements.append(table)
@@ -387,17 +392,12 @@ def make_category_tables(rows, styles, total):
 
     return tables
 
-from greeting.welcome import default_greeting
-
 def main():
     init(autoreset=True)
     readline.parse_and_bind("tab: complete")
     readline.set_completer(completer)
-
-    default_greeting(1.0) # Calls greeting with animation speed of 1x
-
     while True:
-        print(f"Available commands: {G}ping{S}, {G}import_single{S} {C}<bank> <input.csv>{S}, {G}view_db{S}, {G}export{S} {C}<from-date> <to-date>{S},  {G}exit{S}\n")
+        print(f"Available commands: {G}import_single{S} {C}<bank> <input.csv>{S}, {G}view_db{S}, {G}export_all{S} {C}<from-date> <to-date>{S} {R}<optional: category>{S},  {G}exit{S}\n")
         cmd = input("-> ").strip().lower()
         print() 
         if cmd == "exit":
@@ -410,23 +410,29 @@ def main():
             if len(parts) == 3:
                 target_file = CSV_DIR / "new" / parts[1] / parts[2]
                 df = read_csv(target_file)
-                if insert_db(df): break
+                if not insert_db(df): break
                 relocate_path = CSV_DIR / "old" / parts[1] / parts[2]
                 target_file.rename(relocate_path)
             else:
                 print("Usage: import_single <bank> <input.csv>\n")
         elif parts[0] == "view_db":
             view_db()
-        elif parts[0] == "export":
-            if len(parts) == 3 and check_dates(parts[1], parts[2]):
-                output_file = REPORTS_DIR / f"Report_{parts[1]}-{parts[2]}.pdf"
+        elif parts[0] == "export_all":
+            if len(parts) == 4 and int(parts[3]) not in CATEGORIES.keys():
+                print("Category is not in following categories:\n")
+                for k, v in CATEGORIES.items():
+                    print(k, v)
+                print()
+            elif (len(parts) == 4 or len(parts) == 3) and check_dates(parts[1], parts[2]):
+                category = 0 if len(parts) == 3 else int(parts[3])
+                output_file = REPORTS_DIR / f"report_{parts[1]}-{parts[2]}.pdf"
                 from_date = datetime.strptime(parts[1], "%Y-%m-%d").date()
                 to_date = datetime.strptime(parts[2], "%Y-%m-%d").date()
-                generate_pdf(from_date, to_date, str(output_file))
+                generate_pdf(from_date, to_date, str(output_file), category)
                 print(f"Report created: {output_file}\n")
-                Path.unlink(BASE_DIR / "piechart.png")
+                if not category: Path.unlink(BASE_DIR / "piechart.png")
             else:
-                print("Usage: export <from-date> <to-date>\n")
+                print("Usage: export_all <from-date> <to-date> <optional: category>\n")
         ## elif "visualize <from:date> <to:date>"
         else:
             print("Unknown command.\n")
