@@ -1,10 +1,13 @@
 import time
 import os
+from pathlib import Path
 
+
+BASE_DIR = Path(__file__).parent
 matrix_text = ["Wake up, Neo...", "The matrix has you...", "Follow the white rabbit.\n"]
-bloomberg_file_path = "assets/bloomberg.txt"
-matrix_file_path = "assets/matrix.txt"
-matrix_text_file_path = "assets/matrix_greeting.txt"
+bloomberg_file_path = str(BASE_DIR / "assets" / "bloomberg_art.txt")
+matrix_file_path = str(BASE_DIR / "assets" / "matrix_art.txt")
+matrix_text_file_path = str(BASE_DIR / "assets" / "matrix_greeting.txt")
 FRAMERATE = 60
 
 def clear_terminal():
@@ -122,12 +125,12 @@ def greeting(speed: float = 1, fast_adjust: float = 1, slow_adjust: float = 1, b
     bloomberg = speed * 0.02 * bloomberg_adjust
     transition = 1 * transition_adjust
 
-    txt_animator(path="assets/matrix_greeting.txt", char_speed=fast/2, line_speed=slow/2, direction="top_bottom", clear=True)
+    txt_animator(path=matrix_text_file_path, char_speed=fast/2, line_speed=slow/2, direction="top_bottom", clear=True)
     time.sleep(transition/2)
     print() # just so hands ascii art doesnt overlap
-    txt_animator("assets/matrix_art.txt", line_speed=fast*1.5, direction="top_bottom", clear=False)
+    txt_animator(matrix_file_path, line_speed=fast*1.5, direction="top_bottom", clear=False)
     time.sleep(transition*2)
-    txt_animator("assets/bloomberg_art.txt", line_speed=bloomberg, direction="left_right", clear=True)
+    txt_animator(bloomberg_file_path, line_speed=bloomberg, direction="left_right", clear=True)
 
 def default_greeting(speed: float):
     """Calls greeting() with the given speed parameter, which influences various aspects of the animation speed."""
