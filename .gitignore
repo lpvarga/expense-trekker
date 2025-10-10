@@ -1,0 +1,12 @@
+.venv
+.vscode
+
+__pycache__
+
+auskunft_folder/
+
+ing_pdf/
+
+sumreport_folder/
+
+tests/

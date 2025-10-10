@@ -34,10 +34,12 @@ from reportlab.lib import utils
 import matplotlib.pyplot as plt
 import textwrap
 
+import re
+
 CATEGORIES = {
     1: "Groceries, food, household",
-    2: "Entertainment, gym, bar, fun",
-    3: "Utilities, health, transportation, rent, obligations",
+    2: "For fun, not necessary (going out, etc.)",
+    3: "Utilities, health, rent, obligations",
     4: "Clothes",
     5: "Travel",
     6: "Wasted, lost, fined",
@@ -46,6 +48,55 @@ CATEGORIES = {
 }
 
 BANKS = ["revolut", "ing"]
+
+COMMON_SELLERS = {
+    "VISA EREICHELT 12247 BERLIN": (1, "Edeka Siemensstr."),
+    "VISA DM DROGERIE MARKT": (1, "Self-Care, Haushalt"),
+    "Eszter Fischer": (3, "pszichológus"),
+    "VISA JAPANRABBIT.COM": (4, "Japan Proxy Service"),
+    "VISA SCHNEIDEREI KARATAS": (4, "Schneider Lankwitz"),
+    "VISA TRATTORIA DA REMO": (1, "Italiener (aus Kosovo) in Lichterfelde"),
+    "VISA WOLT WOLT": (1, "Lieferservice"),
+    "VISA NAH UND GUT VOELKER": (1, "Edeka Rathaus Steglitz"),
+    "VISA RUEYA": (1, "Döner direkt an der TU"),
+    "VISA EASYPARK": (3, "Parkgebühren"),
+    "VISA S2K FOOD STORE": (1, "Edeka SüdX"),
+    "VISA ULLRICH BERLIN-ZOO": (1, "Number 1 Chillerspot"),
+    "VISA STEINECKE S HEIDEBROT": (1, "Bäcker Rathaus Lankwitz"),
+    "VISA PAYPAL *MILES": (2, "Mietwagen"),
+    "TU Berlin": (3, "Studiengebühren"),
+    "VISA LIDL SAGT DANKE": (1, "TOP Backware"),
+    "VISA EDEKA 5518": (1, ""),
+    "BOLCSKEI IMRENE": (8, ""),
+    "VISA ARAL TANKSTELLE 286057": (3, "Tanke Lankwitz"),
+    "VISA E-REICHELT HADERSBECK": (1, "Edeka Lankwitz (nicht geil)"),
+    "VISA REVIER SUEDOST": (2, "RSO"),
+    "Eric Meintrup": (3, "Miete"),
+    "VISA REWE MARKT GMBH-ZW": (1, ""),
+    "DB Vertrieb GmbH": (3, "Zugkarten/D-Ticket"),
+    "Transfer to KRISZTIAN BERKI": (3, "Fodrász"),
+    "Transfer to BENCE LASZLO MANYOKI KANTOR": (3, "Fodrász"),
+}
+
+FILTERS = {
+    (1, "Groceries"): [r"REWE", r"LIDL", r"KAUFLAND",  r"EDEKA",  r"ALDI", r"ROSSMANN"],
+    (1, "Fast Food / Lieferservice"): [r"LIEFERANDO", r"BURGERMEISTER", r"MCDONALD"],
+    (2, "TAXI"): [r"BOLT.EU"],
+    (3, "health"): [r"APOTHEKE"],
+    (3, "Auto / Tanken"): [r"SHELL", r"ARAL"],
+    (4, "Clothes"): [r"UNIQLO", r"H&M", r"COS", r"C&A", r"ZALANDO",r"VINTED", r"MATCHES", r"WEEKDAY", r"IRONIC GALLERY"],
+    (4, "Shipping"): [r"DHL"],
+    5: [r"AIRBNB"]
+}
+
+# REVOLUT
+AVERAGE_RATES = {
+    "GBP": 1.15,      # 1 GBP = 1.15 EUR, timeframe: 2023-10-01 to 2025-10-10
+    "SEK": 0.09011,   # 1 SEK = 0.09011 EUR, timeframe: 2023-10-01 to 2025-10-10
+    "USD": 0.907,     # 1 USD = 0.907 EUR, timeframe: 2023-11-08 to 2024-09-13
+    "HUF": 0.002485   # 1 HUF ≈ 0.002485 EUR (1 EUR = 402.77 HUF), timeframe: 2023-06-01 to 2025-09-30
+}
+
 
 COMMANDS = {
     "import_single": BANKS,
@@ -121,31 +172,58 @@ def completer(text, state):
         return options[state]
     return None
 
+def match_issuer(issuer):
+    for tup, regex_list in FILTERS.items():
+        for regex in regex_list:
+            if re.search(regex, issuer, re.IGNORECASE): return tup
+    return None
+            
 def categorize(df: pd.DataFrame): 
     new_categories = []
     new_notes = []
     for row in df.itertuples():
-        print("Please enter a category (number) for each transaction\n")
-        for k, v in CATEGORIES.items():
-            print(k, v)
-        print()
-        if row.Bank == "ing": # ING
-            print(f"{G}Index: {row.Index}, {M}Datum: {row.Wertstellungsdatum}, {C}Auftraggeber: {row.Auftraggeber_Empfänger}, {C}Betrag: {row.Betrag} {row.Währung}, {Y}Verwendungszweck: {row.Note}{S}")
-        else: # Revolut
-            print(f"{Fore.GREEN}Index: {row.Index}, Datum: {row.Started_Date}, {M}Auftraggeber: {row.Description}, {C}Betrag: {row.Amount} {row.Currency}{S}")
-        print()
-        while True:
-            user_input = input("Category: ")
+        # automatic fill
+        value_tuple = COMMON_SELLERS.get(row.Issuer)
+        if value_tuple := COMMON_SELLERS.get(row.Issuer):
+            cat, note = value_tuple
+            new_categories.append(cat)
+            new_notes.append(note)
+        elif tup := match_issuer(row.Issuer):
+            cat, note = tup
+            new_categories.append(cat)
+            new_notes.append(note)
+        elif row.Type == "Gehalt/Rente" or row.Type == "Deposit":
+            new_categories.append(7)
+            new_notes.append("")
+        elif row.Type == "Lastschrift" and (row.Issuer == "VISA VATTENFALL GMBH" or row.Issuer == "Vattenfall"):
+            new_categories.append(1)
+            new_notes.append("Vattenfallkantine")
+        # manual fill
+        else:
+            print("Please enter a category (number) for each transaction\n")
+            for k, v in CATEGORIES.items():
+                print(k, v)
             print()
-            if not user_input.isdigit():
-                print("Enter valid category...\n")
-            elif int(user_input) > 8 or int(user_input)  < 1:
-                print("Enter valid category...\n")
-            else:
-                new_categories.append(user_input)
-                new_note = input("Note: ")
-                new_notes.append(new_note)
-                break
+            print(
+                f"{G}Index: {row.Index}, {S}"
+                f"{M}Datum: {row.Transaction_Date}, {S}"
+                f"{C}Auftraggeber: {row.Issuer}, {S}"
+                f"{R}Betrag: {row.Amount} {row.Currency}, {S}"
+                f"{Y}Verwendungszweck: {row.Note}{S}"
+            )
+            print()
+            while True:
+                user_input = input("Category: ")
+                print()
+                if not user_input.isdigit():
+                    print("Enter valid category...\n")
+                elif int(user_input) > 8 or int(user_input)  < 1:
+                    print("Enter valid category...\n")
+                else:
+                    new_categories.append(user_input)
+                    new_note = input("Note: ")
+                    new_notes.append(new_note)
+                    break
     df["Category"] = new_categories
     df["Note"] = new_notes
     return df
@@ -157,20 +235,36 @@ def read_csv(file_path: Path):
         return
     try:
         if bank_code == "ing":
-            df = pd.read_csv(file_path, delimiter=";", skiprows=13, encoding="latin-1")
-            df.rename(columns={"Verwendungszweck": "Note"})
+            df = pd.read_csv(file_path, delimiter=";", skiprows=12, encoding="utf-8")
+            df.rename(columns={
+                "Wertstellungsdatum": "Transaction_Date",
+                "Auftraggeber/Empfänger": "Issuer",
+                "Auftraggeber/Empf�nger": "Issuer",
+                "Betrag": "Amount",
+                "Währung": "Currency",
+                "W�hrung": "Currency",
+                "Verwendungszweck": "Note",
+                "Buchungstext": "Type"
+            }, inplace=True)
         else:
             df = pd.read_csv(file_path, delimiter=",", encoding="latin-1")
+            df.rename(columns={
+                "Completed Date": "Transaction_Date",
+                "Description": "Issuer",
+                "Amount": "Amount",
+                "Currency": "Currency"
+            }, inplace=True)
             df["Note"] = ""
-        df["Category"] = None
-        df["Bank"] = bank_code
-        df.columns = df.columns.str.replace('/', '_').str.replace(' ', '_')
     except FileNotFoundError:
         print(f"File {file_path} not found.")
         return
     except Exception as e:
         print("Error during file handling:", e, "\n")
         return
+    df["Category"] = None
+    df["Bank"] = bank_code
+
+    print(df.columns)
     df_categorized = categorize(df)
     return df_categorized
 
@@ -187,26 +281,15 @@ def insert_db(df: pd.DataFrame):
     with Session.begin() as session:
         for row in df.itertuples(index = True):
             try:
-                if row.Bank == "ing":
-                    transaction = Transaction(
-                        transaction_date = to_iso_date(row.Wertstellungsdatum),
-                        issuer = row.Auftraggeber_Empfänger,
-                        amount = row.Betrag,
-                        currency = row.Währung,
-                        bank = row.Bank,
-                        category = row.Category,
-                        note = row.Note
-                    )
-                else:
-                    transaction = Transaction(
-                        transaction_date = to_iso_date(row.Started_Date),
-                        issuer = row.Description,
-                        amount = row.Amount,
-                        currency = row.Currency,
-                        bank = row.Bank,
-                        category = row.Category,
-                        note = row.Note
-                    )
+                transaction = Transaction(
+                    transaction_date=to_iso_date(row.Transaction_Date),
+                    issuer=row.Issuer,
+                    amount=row.Amount,
+                    currency=row.Currency,
+                    bank=row.Bank,
+                    category=row.Category,
+                    note=row.Note
+                )
                 session.add(transaction)
             except Exception as e:
                 print(f"Error creating Transaction for row {row.Index}: {e}")
@@ -397,7 +480,11 @@ def main():
     readline.parse_and_bind("tab: complete")
     readline.set_completer(completer)
     while True:
-        print(f"Available commands: {G}import_single{S} {C}<bank> <input.csv>{S}, {G}view_db{S}, {G}export_all{S} {C}<from-date> <to-date>{S} {R}<optional: category>{S},  {G}exit{S}\n")
+        print("Available commands:"
+              f"{G}import_single{S} {C}<bank> <input.csv>{S},"
+              f"{G}view_db{S},"
+              f"{G}export_all{S} {C}<from-date> <to-date>{S} {R}<optional: category>{S},"
+              f"{G}exit{S}\n")
         cmd = input("-> ").strip().lower()
         print() 
         if cmd == "exit":
