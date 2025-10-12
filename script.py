@@ -37,14 +37,15 @@ from greeting import welcome
 ###################################################################
 
 CATEGORIES = {
-    1: "Groceries, food, household",
-    2: "For fun, not necessary (going out, etc.)",
-    3: "Utilities, health, rent, obligations",
-    4: "Clothes",
-    5: "Travel",
-    6: "Wasted, lost, fined",
-    7: "idk",
-    8: "Income"
+    1: "Groceries, household",
+    2: "Restaurant",
+    3: "For fun, not necessary (going out, etc.)",
+    4: "Utilities, health, rent, obligations",
+    5: "Clothes",
+    6: "Travel",
+    7: "Wasted, lost, fined",
+    8: "idk",
+    9: "Income"
 }
 
 BANKS = ["revolut", "ing"]
@@ -52,41 +53,40 @@ BANKS = ["revolut", "ing"]
 COMMON_SELLERS = {
     "VISA EREICHELT 12247 BERLIN": (1, "Edeka Siemensstr."),
     "VISA DM DROGERIE MARKT": (1, "Self-Care, Haushalt"),
-    "Eszter Fischer": (3, "pszichológus"),
-    "VISA JAPANRABBIT.COM": (4, "Japan Proxy Service"),
-    "VISA SCHNEIDEREI KARATAS": (4, "Schneider Lankwitz"),
-    "VISA TRATTORIA DA REMO": (1, "Italiener (aus Kosovo) in Lichterfelde"),
-    "VISA WOLT WOLT": (1, "Lieferservice"),
+    "Eszter Fischer": (4, "pszichológus"),
+    "VISA JAPANRABBIT.COM": (5, "Japan Proxy Service"),
+    "VISA SCHNEIDEREI KARATAS": (5, "Schneider Lankwitz"),
+    "VISA TRATTORIA DA REMO": (2, "Italiener (aus Kosovo) in Lichterfelde"),
+    "VISA WOLT WOLT": (2, "Lieferservice"),
     "VISA NAH UND GUT VOELKER": (1, "Edeka Rathaus Steglitz"),
-    "VISA RUEYA": (1, "Döner direkt an der TU"),
-    "VISA EASYPARK": (3, "Parkgebühren"),
+    "VISA RUEYA": (2, "Döner direkt an der TU"),
+    "VISA EASYPARK": (4, "Parkgebühren"),
     "VISA S2K FOOD STORE": (1, "Edeka SüdX"),
     "VISA ULLRICH BERLIN-ZOO": (1, "Number 1 Chillerspot"),
     "VISA STEINECKE S HEIDEBROT": (1, "Bäcker Rathaus Lankwitz"),
-    "VISA PAYPAL *MILES": (2, "Mietwagen"),
-    "TU Berlin": (3, "Studiengebühren"),
+    "VISA PAYPAL *MILES": (3, "Mietwagen"),
+    "TU Berlin": (4, "Studiengebühren"),
     "VISA LIDL SAGT DANKE": (1, "TOP Backware"),
     "VISA EDEKA 5518": (1, ""),
-    "BOLCSKEI IMRENE": (8, ""),
-    "VISA ARAL TANKSTELLE 286057": (3, "Tanke Lankwitz"),
+    "BOLCSKEI IMRENE": (9, ""),
+    "VISA ARAL TANKSTELLE 286057": (4, "Tanke Lankwitz"),
     "VISA E-REICHELT HADERSBECK": (1, "Edeka Lankwitz (nicht geil)"),
-    "VISA REVIER SUEDOST": (2, "RSO"),
-    "Eric Meintrup": (3, "Miete"),
+    "VISA REVIER SUEDOST": (3, "RSO"),
     "VISA REWE MARKT GMBH-ZW": (1, ""),
-    "DB Vertrieb GmbH": (3, "Zugkarten/D-Ticket"),
-    "Transfer to KRISZTIAN BERKI": (3, "Fodrász"),
-    "Transfer to BENCE LASZLO MANYOKI KANTOR": (3, "Fodrász"),
+    "DB Vertrieb GmbH": (4, "Zugkarten/D-Ticket"),
+    "Transfer to KRISZTIAN BERKI": (4, "Fodrász"),
+    "Transfer to BENCE LASZLO MANYOKI KANTOR": (4, "Fodrász"),
 }
 
 FILTERS = {
     (1, "Groceries"): [r"REWE", r"LIDL", r"KAUFLAND",  r"EDEKA",  r"ALDI", r"ROSSMANN"],
-    (1, "Fast Food / Lieferservice"): [r"LIEFERANDO", r"BURGERMEISTER", r"MCDONALD"],
-    (2, "TAXI"): [r"BOLT.EU"],
-    (3, "health"): [r"APOTHEKE"],
-    (3, "Auto / Tanken"): [r"SHELL", r"ARAL"],
-    (4, "Clothes"): [r"UNIQLO", r"H&M", r"COS", r"C&A", r"ZALANDO",r"VINTED", r"MATCHES", r"WEEKDAY", r"IRONIC GALLERY"],
-    (4, "Shipping"): [r"DHL"],
-    5: [r"AIRBNB"]
+    (2, "Fast Food / Lieferservice"): [r"LIEFERANDO", r"BURGERMEISTER", r"MCDONALD"],
+    (3, "TAXI"): [r"BOLT.EU"],
+    (4, "health"): [r"APOTHEKE"],
+    (4, "Auto / Tanken"): [r"SHELL", r"ARAL"],
+    (5, "Clothes"): [r"UNIQLO", r"H&M", r"COS", r"C&A", r"ZALANDO",r"VINTED", r"MATCHES", r"WEEKDAY", r"IRONIC GALLERY"],
+    (5, "Shipping"): [r"DHL"],
+    6: [r"AIRBNB"]
 }
 
 # REVOLUT
@@ -160,6 +160,7 @@ def read_csv(file_path: Path):
     df["Category"] = None
     df["Bank"] = bank_code
     df_categorized = categorize(df)
+    print(df_categorized.to_string())
     return df_categorized
 
 def categorize(df: pd.DataFrame): 
@@ -177,7 +178,7 @@ def categorize(df: pd.DataFrame):
             new_categories.append(cat)
             new_notes.append(note)
         elif row.Type == "Gehalt/Rente" or row.Type == "Deposit":
-            new_categories.append(7)
+            new_categories.append(9)
             new_notes.append("")
         elif row.Type == "Lastschrift" and (row.Issuer == "VISA VATTENFALL GMBH" or row.Issuer == "Vattenfall"):
             new_categories.append(1)
@@ -381,6 +382,8 @@ def make_piechart(category_sums: dict):
     labels = [CATEGORIES.get(k) for k in category_sums.keys()]
     values = [abs(v) for v in category_sums.values()]
     
+    colors = plt.cm.tab10.colors[:len(category_sums.keys())]
+    color_map = dict(zip(category_sums.keys(), colors))
 
     custom_labels = ["" if value == 0 else f"{textwrap.fill(label, 20)}\n -{value:.1f}EUR" for label, value in zip(labels, values)]
 
