@@ -202,7 +202,7 @@ def categorize(df: pd.DataFrame):
                 print()
                 if not user_input.isdigit():
                     print("Enter valid category...\n")
-                elif int(user_input) > 8 or int(user_input)  < 1:
+                elif int(user_input) > 9 or int(user_input)  < 1:
                     print("Enter valid category...\n")
                 else:
                     new_categories.append(user_input)
