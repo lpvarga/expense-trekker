@@ -24,7 +24,8 @@ from reportlab.platypus import (
     Paragraph,
     PageBreak,
     Spacer,
-    Image
+    Image,
+    HRFlowable
 )
 from reportlab.lib import utils
 import matplotlib.pyplot as plt
@@ -44,7 +45,7 @@ CATEGORIES = {
     5: "Clothes",
     6: "Travel",
     7: "Wasted, lost, fined",
-    8: "idk",
+    8: "ATM Withdrawals",
     9: "Income"
 }
 
@@ -54,7 +55,6 @@ COMMON_SELLERS = {
     "VISA EREICHELT 12247 BERLIN": (1, "Edeka Siemensstr."),
     "VISA DM DROGERIE MARKT": (1, "Self-Care, Haushalt"),
     "Eszter Fischer": (4, "pszichológus"),
-    "VISA JAPANRABBIT.COM": (5, "Japan Proxy Service"),
     "VISA SCHNEIDEREI KARATAS": (5, "Schneider Lankwitz"),
     "VISA TRATTORIA DA REMO": (2, "Italiener (aus Kosovo) in Lichterfelde"),
     "VISA WOLT WOLT": (2, "Lieferservice"),
@@ -84,9 +84,9 @@ FILTERS = {
     (3, "TAXI"): [r"BOLT.EU"],
     (4, "health"): [r"APOTHEKE"],
     (4, "Auto / Tanken"): [r"SHELL", r"ARAL"],
-    (5, "Clothes"): [r"UNIQLO", r"H&M", r"COS", r"C&A", r"ZALANDO",r"VINTED", r"MATCHES", r"WEEKDAY", r"IRONIC GALLERY"],
+    (5, "Clothes"): [r"UNIQLO", r"H&M", r"COS", r"ZALANDO",r"VINTED", r"MATCHES", r"WEEKDAY", r"IRONIC GALLERY"],
     (5, "Shipping"): [r"DHL"],
-    6: [r"AIRBNB"]
+    (6, "Airbnb"): [r"AIRBNB"]
 }
 
 # REVOLUT
@@ -131,7 +131,7 @@ def read_csv(file_path: Path):
         return
     try:
         if bank_code == "ing":
-            df = pd.read_csv(file_path, delimiter=";", skiprows=12, encoding="utf-8")
+            df = pd.read_csv(file_path, delimiter=";", skiprows=11, encoding="utf-8")
             df.rename(columns={
                 "Wertstellungsdatum": "Transaction_Date",
                 "Auftraggeber/Empfänger": "Issuer",
@@ -181,7 +181,7 @@ def categorize(df: pd.DataFrame):
             new_categories.append(9)
             new_notes.append("")
         elif row.Type == "Lastschrift" and (row.Issuer == "VISA VATTENFALL GMBH" or row.Issuer == "Vattenfall"):
-            new_categories.append(1)
+            new_categories.append(2)
             new_notes.append("Vattenfallkantine")
         # manual fill
         else:
@@ -270,12 +270,13 @@ def generate_pdf(from_date, to_date, output_file, category):
         5: [],
         6: [],
         7: [],
-        8: []
+        8: [],
+        9: []
     }
     with Session.begin() as session:
         query = select(Transaction) \
             .where(Transaction.transaction_date >= from_date, Transaction.transaction_date <= to_date) \
-            .order_by(Transaction.transaction_date.desc())
+            .order_by(Transaction.transaction_date.asc())
         if category: query = query.filter(Transaction.category == category)
         transactions = session.scalars(query).all()
         for t in transactions:
@@ -297,6 +298,18 @@ def generate_pdf(from_date, to_date, output_file, category):
         elements.append(get_image(str(IMG_PATH), width = 15*cm))
     else:
         elements.append(Paragraph(f'<para alignment="center">{CATEGORIES.get(category)}</para>', styles["Heading2"]))
+
+    elements.append(Spacer(1, 1*cm))
+    spendings = dict(list(category_sums.items())[:-1])
+    for cat, total in spendings.items():
+        elements.append(Paragraph(f'<para alignment="right">{CATEGORIES.get(cat)}: <b>{total:.2f}EUR</b></para>', styles["Normal"]))
+    elements.append(HRFlowable(width="100%", thickness=1, color="black", spaceBefore=5, spaceAfter=5))
+    spendings_total = sum(spendings.values())
+    income = list(category_sums.values())[-1]
+    elements.append(Paragraph(f'<para alignment="right">Spendings:<b>{spendings_total:.2f}EUR</b></para>', styles["Normal"]))
+    elements.append(Paragraph(f'<para alignment="right">Income:<b>{income:.2f}EUR</b></para>', styles["Normal"]))
+    elements.append(HRFlowable(width="100%", thickness=1, color="black", spaceBefore=5, spaceAfter=5))
+    elements.append(Paragraph(f'<para alignment="right">Total:<b>{spendings_total + income:.2f}EUR</b></para>', styles["Normal"]))
     elements.append(PageBreak())
         
 
@@ -325,7 +338,11 @@ def make_category_tables(rows, styles, total):
 
         # Transaction rows
         for idx, (transaction_id, transaction_date, issuer, amount, currency, bank, category, note) in enumerate(chunk):
-            desc_text = f"Transaction #{transaction_id}, {transaction_date} - {issuer}<br/>&#10148; {note}"
+            
+            if (category == 8):
+                desc_text = f"Transaction #{transaction_id}, {transaction_date} - {issuer}"
+            else:    
+                desc_text = f"Transaction #{transaction_id}, {transaction_date} - {issuer}<br/>&#10148; {note}"
             if currency != "EUR":
                 amount_text = f" {amount:.2f}{currency} ≈ {amount*AVERAGE_RATES.get(currency):.2f}EUR"
             else:
@@ -382,15 +399,28 @@ def make_piechart(category_sums: dict):
     labels = [CATEGORIES.get(k) for k in category_sums.keys()]
     values = [abs(v) for v in category_sums.values()]
     
-    colors = plt.cm.tab10.colors[:len(category_sums.keys())]
-    color_map = dict(zip(category_sums.keys(), colors))
-
+    base_colors = [
+        "#e377c2",  # Pink
+        "#ff7f0e",  # Orange
+        "#8c564b",  # Braun
+        "#2ca02c",  # Grün
+        "#9467bd",  # Lila
+        "#1f77b4",  # Blau
+        "#bcbd22",  # Gelbgrün
+        "#17becf",   # Türkis
+        "#cccccc"
+    ]
+    base_colors = dict(zip(labels, base_colors))
+    
+    color_map = {label: base_colors.get(label) for label in labels}
+    print(color_map)
     custom_labels = ["" if value == 0 else f"{textwrap.fill(label, 20)}\n -{value:.1f}EUR" for label, value in zip(labels, values)]
 
     fig, ax = plt.subplots(figsize=(10, 7)) 
     wedges, texts, autotexts = ax.pie(
         values,
         labels=custom_labels,
+        colors=[color_map[label] for label in labels],
         autopct= lambda pct, vals=values: f'{pct:1.1f}%' if vals.pop(0) != 0 else '',
         startangle=90,
         wedgeprops=dict(width=0.5),  # donut
@@ -504,7 +534,7 @@ def completer(text, state):
 ###################################################################
 
 def main():
-    welcome.default_greeting(1)
+    # welcome.default_greeting(1)
     print()
     init(autoreset=True)
     readline.parse_and_bind("tab: complete")
